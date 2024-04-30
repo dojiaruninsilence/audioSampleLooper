@@ -10,6 +10,10 @@ MainComponent::MainComponent() {
     clearButton.setButtonText("Clear");
     clearButton.onClick = [this] {clearButtonClicked();};
 
+    addAndMakeVisible(levelSlider);
+    levelSlider.setRange(0.0, 1.0);
+    levelSlider.onValueChange = [this] {currentLevel = (float)levelSlider.getValue();};
+
     // Make sure you set the size of the component after
     // you add any child components.
     setSize (300, 200);
@@ -28,6 +32,9 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) {
+    auto level = currentLevel;
+    auto startLevel = juce::approximatelyEqual(level, previousLevel) ? level : previousLevel;
+
     auto numInputChannels = fileBuffer.getNumChannels();
     auto numOutputChannels = bufferToFill.buffer->getNumChannels();
 
@@ -40,6 +47,8 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 
         for (auto channel = 0; channel < numOutputChannels; ++channel) {
             bufferToFill.buffer->copyFrom(channel, outputSamplesOffset, fileBuffer, channel % numInputChannels, position, samplesThisTime);
+
+            bufferToFill.buffer->applyGainRamp(channel, outputSamplesOffset, samplesThisTime, startLevel, level);
         }
 
         outputSamplesRemaining -= samplesThisTime;
@@ -50,6 +59,8 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
             position = 0;
         }
     }
+
+    previousLevel = level;
 }
 
 void MainComponent::releaseResources() {
@@ -66,6 +77,7 @@ void MainComponent::paint (juce::Graphics& g) {
 void MainComponent::resized() {
     openButton.setBounds(10, 10, getWidth() - 20, 20);
     clearButton.setBounds(10, 40, getWidth() - 20, 20);
+    levelSlider.setBounds(10, 70, getWidth() - 20, 20);
 }
 
 void MainComponent::openButtonClicked() {
