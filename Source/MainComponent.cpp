@@ -1,75 +1,103 @@
 #include "MainComponent.h"
 
 //==============================================================================
-MainComponent::MainComponent()
-{
+MainComponent::MainComponent() {
+    addAndMakeVisible(openButton);
+    openButton.setButtonText("Open...");
+    openButton.onClick = [this] {openButtonClicked();};
+
+    addAndMakeVisible(clearButton);
+    clearButton.setButtonText("Clear");
+    clearButton.onClick = [this] {clearButtonClicked();};
+
     // Make sure you set the size of the component after
     // you add any child components.
-    setSize (800, 600);
+    setSize (300, 200);
 
-    // Some platforms require permissions to open input channels so request that here
-    if (juce::RuntimePermissions::isRequired (juce::RuntimePermissions::recordAudio)
-        && ! juce::RuntimePermissions::isGranted (juce::RuntimePermissions::recordAudio))
-    {
-        juce::RuntimePermissions::request (juce::RuntimePermissions::recordAudio,
-                                           [&] (bool granted) { setAudioChannels (granted ? 2 : 0, 2); });
-    }
-    else
-    {
-        // Specify the number of input and output channels that we want to open
-        setAudioChannels (2, 2);
-    }
+    formatManager.registerBasicFormats();
 }
 
-MainComponent::~MainComponent()
-{
+MainComponent::~MainComponent() {
     // This shuts down the audio device and clears the audio source.
     shutdownAudio();
 }
 
 //==============================================================================
-void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
-{
-    // This function will be called when the audio device is started, or when
-    // its settings (i.e. sample rate, block size, etc) are changed.
-
-    // You can use this function to initialise any resources you might need,
-    // but be careful - it will be called on the audio thread, not the GUI thread.
-
-    // For more details, see the help for AudioProcessor::prepareToPlay()
+void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate) {
+    
 }
 
-void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
-{
-    // Your audio-processing code goes here!
+void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) {
+    auto numInputChannels = fileBuffer.getNumChannels();
+    auto numOutputChannels = bufferToFill.buffer->getNumChannels();
 
-    // For more details, see the help for AudioProcessor::getNextAudioBlock()
+    auto outputSamplesRemaining = bufferToFill.numSamples;
+    auto outputSamplesOffset = bufferToFill.startSample;
 
-    // Right now we are not producing any data, in which case we need to clear the buffer
-    // (to prevent the output of random noise)
-    bufferToFill.clearActiveBufferRegion();
+    while (outputSamplesRemaining > 0) {
+        auto bufferSamplesRemaining = fileBuffer.getNumSamples() - position;
+        auto samplesThisTime = juce::jmin(outputSamplesRemaining, bufferSamplesRemaining);
+
+        for (auto channel = 0; channel < numOutputChannels; ++channel) {
+            bufferToFill.buffer->copyFrom(channel, outputSamplesOffset, fileBuffer, channel % numInputChannels, position, samplesThisTime);
+        }
+
+        outputSamplesRemaining -= samplesThisTime;
+        outputSamplesOffset += samplesThisTime;
+        position += samplesThisTime;
+
+        if (position == fileBuffer.getNumSamples()) {
+            position = 0;
+        }
+    }
 }
 
-void MainComponent::releaseResources()
-{
-    // This will be called when the audio device stops, or when it is being
-    // restarted due to a setting change.
-
-    // For more details, see the help for AudioProcessor::releaseResources()
+void MainComponent::releaseResources() {
+    // reset the buffer
+    fileBuffer.setSize(0, 0);
 }
 
 //==============================================================================
-void MainComponent::paint (juce::Graphics& g)
-{
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
-
-    // You can add your drawing code here!
+void MainComponent::paint (juce::Graphics& g) {
+    // fill black
+    g.fillAll(juce::Colours::black);
 }
 
-void MainComponent::resized()
-{
-    // This is called when the MainContentComponent is resized.
-    // If you add any child components, this is where you should
-    // update their positions.
+void MainComponent::resized() {
+    openButton.setBounds(10, 10, getWidth() - 20, 20);
+    clearButton.setBounds(10, 40, getWidth() - 20, 20);
+}
+
+void MainComponent::openButtonClicked() {
+    shutdownAudio();
+
+    chooser = std::make_unique<juce::FileChooser>("Select a Wave file shorter than 2 seconds to play...", juce::File{}, "*.wav");
+    auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+
+    chooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc) {
+        auto file = fc.getResult();
+
+        if (file == juce::File{}) {
+            return;
+        }
+
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+
+        if (reader.get() != nullptr) {
+            auto duration = (float)reader->lengthInSamples / reader->sampleRate;
+
+            if (duration < 2) {
+                fileBuffer.setSize((int)reader->lengthInSamples, (int)reader->lengthInSamples);
+                reader->read(&fileBuffer, 0, (int)reader->lengthInSamples, 0, true, true);
+                position = 0;
+                setAudioChannels(0, (int)reader->numChannels);
+            } else {
+                // handle the error that the file is 2 seconds or longer
+            }
+        }
+    });
+}
+
+void MainComponent::clearButtonClicked() {
+    shutdownAudio();
 }
